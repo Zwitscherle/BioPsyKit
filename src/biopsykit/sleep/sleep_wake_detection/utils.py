@@ -32,8 +32,8 @@ def rescore(predictions: np.ndarray, epoch_length: Optional[EPOCH_LENGTH] = 30) 
 
     # wake phases of 1 minute, surrounded by sleep, get rescored
     for t in range(1, len(rescored) - 1):  # pylint:disable=consider-using-enumerate
-        if rescored[t] == 1 and rescored[t - 1] == 0 and rescored[t + 1] == 0:
-            rescored[t] = 0
+        if rescored[t] == 0 and rescored[t - 1] == 1 and rescored[t + 1] == 1:
+            rescored[t] = 1
 
     return rescored
 
@@ -41,7 +41,7 @@ def rescore(predictions: np.ndarray, epoch_length: Optional[EPOCH_LENGTH] = 30) 
 def _apply_recording_rules_a_c(rescored: np.ndarray, epoch_length: EPOCH_LENGTH):  # pylint:disable=too-many-branches
     wake_bin = 0
     for t in range(len(rescored)):  # pylint:disable=consider-using-enumerate
-        if rescored[t] == 1:
+        if rescored[t] == 0:
             wake_bin += 1
         else:
             if epoch_length == 30:

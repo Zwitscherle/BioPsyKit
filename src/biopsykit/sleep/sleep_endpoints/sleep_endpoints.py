@@ -57,7 +57,22 @@ def compute_sleep_endpoints(
     net_sleep_time = sleep_wake[sleep_wake["sleep_wake"].eq(1)]
     net_sleep_duration = len(net_sleep_time)
     if net_sleep_time.empty:
-        return {}
+        print('-----------------')
+        print('empty sleep time')
+        print('-----------------')
+        return {
+            "date": 0.0,
+            "sleep_onset": 0.0,
+            "wake_onset": 0.0,
+            "total_sleep_duration": 0.0,
+            "net_sleep_duration": 0.0,
+            "bed_interval_start": 0.0,
+            "bed_interval_end": 0.0,
+            "sleep_efficiency": 0.0,
+            "sleep_onset_latency": 0.0,
+            "getup_latency": 0.0,
+            "wake_after_sleep_onset": 0.0,
+        }
     df_sw_sleep = sleep_wake[net_sleep_time.index[0] : net_sleep_time.index[-1]].copy()
 
     # get percent of total time asleep
@@ -118,9 +133,9 @@ def compute_sleep_endpoints(
         "sleep_onset_latency": sleep_onset_latency,
         "getup_latency": getup_latency,
         "wake_after_sleep_onset": wake_after_sleep_onset,
-        "sleep_bouts": sleep_bouts,
-        "wake_bouts": wake_bouts,
-        "number_wake_bouts": num_wake_bouts,
+        #"sleep_bouts": sleep_bouts,
+        #"wake_bouts": wake_bouts,
+        #"number_wake_bouts": num_wake_bouts,
     }
     return dict_result
 
