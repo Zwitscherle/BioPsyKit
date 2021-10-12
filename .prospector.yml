@@ -49,4 +49,8 @@ pylint:
     - invalid-unary-operand-type
     - protected-access
     - too-many-lines
+    - useless-suppression
+    - unsupported-assignment-operation # because of pylint/astroid bug
+    - unsubscriptable-object # because of pylint/astroid bug
+    - consider-using-f-string
 

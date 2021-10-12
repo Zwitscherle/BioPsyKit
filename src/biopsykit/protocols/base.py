@@ -1,38 +1,40 @@
 """Module implementing a base class to represent psychological protocols."""
-from pathlib import Path
-from typing import Dict, Sequence, Union, Tuple, Optional, Any, Iterable, Type
-
 import json
+from pathlib import Path
+from typing import Any, Dict, Iterable, Optional, Sequence, Tuple, Type, Union
 
-import pandas as pd
 import matplotlib.pyplot as plt
+import pandas as pd
+from tqdm.auto import tqdm
 
 import biopsykit.protocols.plotting as plot
+from biopsykit.io import write_pandas_dict_excel
 from biopsykit.protocols._utils import _check_sample_times_match, _get_sample_times
 from biopsykit.signals.ecg import EcgProcessor
-from biopsykit.utils._datatype_validation_helper import _assert_is_dtype, _assert_file_extension
-from biopsykit.utils._types import path_t, T
+from biopsykit.utils._datatype_validation_helper import _assert_file_extension, _assert_is_dtype
+from biopsykit.utils._types import T, path_t
 from biopsykit.utils.data_processing import (
-    resample_dict_sec,
-    select_dict_phases,
-    normalize_to_phase,
     add_subject_conditions,
     cut_phases_to_shortest,
     mean_per_subject_dict,
-    rearrange_subject_data_dict,
-    split_dict_into_subphases,
-    merge_study_data_dict,
     mean_se_per_phase,
+    merge_study_data_dict,
+    normalize_to_phase,
+    rearrange_subject_data_dict,
+    resample_dict_sec,
+    select_dict_phases,
+    split_dict_into_subphases,
     split_subject_conditions,
 )
 from biopsykit.utils.datatype_helper import (
     HeartRateSubjectDataDict,
-    is_study_data_dict,
-    SalivaRawDataFrame,
-    is_saliva_raw_dataframe,
-    SubjectDataDict,
     SalivaFeatureDataFrame,
+    SalivaRawDataFrame,
+    SubjectDataDict,
+    is_hr_subject_data_dict,
     is_saliva_mean_se_dataframe,
+    is_saliva_raw_dataframe,
+    is_subject_data_dict,
 )
 from biopsykit.utils.exceptions import ValidationError
 
@@ -294,7 +296,7 @@ class BaseProtocol:  # pylint:disable=too-many-public-methods
 
         to_export = ["name", "structure", "test_times"]
         json_dict = {key: self.__dict__[key] for key in to_export}
-        with open(file_path, "w+") as fp:
+        with open(file_path, "w+", encoding="utf-8") as fp:
             json.dump(json_dict, fp)
 
     @classmethod
@@ -315,7 +317,7 @@ class BaseProtocol:  # pylint:disable=too-many-public-methods
         file_path = Path(file_path)
         _assert_file_extension(file_path, ".json")
 
-        with open(file_path) as fp:
+        with open(file_path, encoding="utf-8") as fp:
             json_dict = json.load(fp)
             return cls(**json_dict)
 
@@ -383,7 +385,7 @@ class BaseProtocol:  # pylint:disable=too-many-public-methods
                 raise ValidationError(
                     "'data' is expected to be either a SalivaRawDataFrame or a SalivaMeanSeDataFrame! "
                     "The validation raised the following error:\n\n{}".format(str(e))
-                )
+                ) from e
         _check_sample_times_match(data, sample_times)
         return data
 
@@ -407,11 +409,12 @@ class BaseProtocol:  # pylint:disable=too-many-public-methods
             Default: ``None``
 
         """
-        is_study_data_dict(hr_data)
+        is_hr_subject_data_dict(hr_data)
         if study_part is None:
             study_part = "Study"
         self.hr_data[study_part] = hr_data
         if rpeak_data is not None:
+            is_subject_data_dict(rpeak_data)
             self.rpeak_data[study_part] = rpeak_data
 
     def compute_hr_results(  # pylint:disable=too-many-branches
@@ -498,7 +501,10 @@ class BaseProtocol:  # pylint:disable=too-many-public-methods
             data_dict = split_dict_into_subphases(data_dict, param)
 
         if mean_per_subject:
-            param = params.get("mean_per_subject", ["subject", "phase"])
+            if split_into_subphases:
+                param = params.get("mean_per_subject", ["subject", "phase", "subphase"])
+            else:
+                param = params.get("mean_per_subject", ["subject", "phase"])
             data_dict = mean_per_subject_dict(data_dict, param, "Heart_Rate")
 
         if add_conditions:
@@ -513,9 +519,9 @@ class BaseProtocol:  # pylint:disable=too-many-public-methods
         study_part: Optional[str] = None,
         select_phases: Optional[bool] = False,
         split_into_subphases: Optional[bool] = False,
-        add_conditions: Optional[bool] = False,
         dict_levels: Sequence[str] = None,
         hrv_params: Optional[Dict[str, Any]] = None,
+        add_conditions: Optional[bool] = False,
         params: Optional[Dict[str, Any]] = None,
     ):
         """Compute heart rate variability ensemble from one study part.
@@ -543,12 +549,6 @@ class BaseProtocol:  # pylint:disable=too-many-public-methods
             dictionary (keys: subphase names, values: subphase durations in seconds) in the ``params`` dictionary
             (key: ``split_into_subphases``).
             Default: ``False``
-        add_conditions : bool, optional
-            ``True`` to add subject conditions to dataframe data. Information on which subject belongs to which
-            condition can be provided as :obj:`~biopsykit.utils.datatype_helper.SubjectConditionDataFrame` or
-            :obj:`~biopsykit.utils.datatype_helper.SubjectConditionDict` in the ``params`` dictionary
-            (key: ``add_conditions``).
-            Default: ``False``
         dict_levels : list, optional
             list with names of dictionary levels which will also be the index level names of the resulting dataframe
             or ``None`` to use default level names: ["subject", "phase"] (if ``split_into_subphases`` is ``False``)
@@ -556,6 +556,12 @@ class BaseProtocol:  # pylint:disable=too-many-public-methods
         hrv_params : dict, optional
             dictionary with parameters to configure HRV processing or ``None`` to use default parameter.
             See :func:`~biopsykit.signals.ecg.EcgProcessor.hrv_process` for an overview on available parameters.
+        add_conditions : bool, optional
+            ``True`` to add subject conditions to dataframe data. Information on which subject belongs to which
+            condition can be provided as :obj:`~biopsykit.utils.datatype_helper.SubjectConditionDataFrame` or
+            :obj:`~biopsykit.utils.datatype_helper.SubjectConditionDict` in the ``params`` dictionary
+            (key: ``add_conditions``).
+            Default: ``False``
         params : dict, optional
             dictionary with parameters provided to the different processing steps.
 
@@ -595,7 +601,7 @@ class BaseProtocol:  # pylint:disable=too-many-public-methods
         self, rpeak_dict: Dict[str, Any], hrv_params: Dict[str, Any], dict_levels: Sequence[str]
     ) -> pd.DataFrame:
         result_dict = {}
-        for key, value in rpeak_dict.items():
+        for key, value in tqdm(list(rpeak_dict.items()), desc=dict_levels[0]):
             _assert_is_dtype(value, (dict, pd.DataFrame))
             if isinstance(value, dict):
                 # nested dictionary
@@ -676,11 +682,16 @@ class BaseProtocol:  # pylint:disable=too-many-public-methods
             study_part = "Study"
         data_dict = self.hr_data[study_part].copy()
 
+        if params is None:
+            params = {}
+
         if resample_sec:
             data_dict = resample_dict_sec(data_dict)
 
         if normalize_to:
             param = params.get("normalize_to", None)
+            if param is None:
+                raise ValueError("When 'normalize_to' is 'True' a phase name must be specified!")
             data_dict = normalize_to_phase(data_dict, param)
 
         data_dict = rearrange_subject_data_dict(data_dict)
@@ -712,6 +723,7 @@ class BaseProtocol:  # pylint:disable=too-many-public-methods
             dataframe with computed heart rate processing ensemble
 
         """
+        _assert_is_dtype(results, pd.DataFrame)
         self.hr_results[result_id] = results
 
     def get_hr_results(self, result_id: str) -> pd.DataFrame:
@@ -759,6 +771,19 @@ class BaseProtocol:  # pylint:disable=too-many-public-methods
         """
         self._export_results(base_path, prefix, self.hr_results)
 
+    def export_hr_ensemble(self, base_path: path_t, prefix: Optional[str] = None):
+        """Export all heart rate ensemble data to Excel files.
+
+        Parameters
+        ----------
+        base_path : :class:`~pathlib.Path` or str
+            folder path to export all heart rate ensemble files to
+        prefix : str, optional
+            prefix to add to file name or ``None`` to use ``name`` attribute (in lowercase) as prefix
+
+        """
+        self._export_ensemble(base_path, prefix, self.hr_ensemble)
+
     def export_hrv_results(self, base_path: path_t, prefix: Optional[str] = None):
         """Export all heart rate variability results to csv files.
 
@@ -782,6 +807,17 @@ class BaseProtocol:  # pylint:disable=too-many-public-methods
         for key, data in result_dict.items():
             file_name = "{}_{}.csv".format(prefix, key)
             data.to_csv(base_path.joinpath(file_name))
+
+    def _export_ensemble(self, base_path: path_t, prefix: str, result_dict: Dict[str, Dict[str, pd.DataFrame]]):
+        # ensure pathlib
+        base_path = Path(base_path)
+        if not base_path.is_dir():
+            raise ValueError("'base_path' must be a directory!")
+        if prefix is None:
+            prefix = self.name.lower().replace(" ", "_")
+        for key, data in result_dict.items():
+            file_name = "{}_{}.xlsx".format(prefix, key)
+            write_pandas_dict_excel(data, base_path.joinpath(file_name))
 
     def get_hrv_results(self, result_id: str) -> pd.DataFrame:
         """Return heart rate variability processing ensemble.
@@ -810,10 +846,11 @@ class BaseProtocol:  # pylint:disable=too-many-public-methods
         ----------
         ensemble_id : str
             identifier of ensemble parameters used to store dictionary in ``hr_ensemble`` dictionary
-        ensemble : :class:`~pandas.DataFrame`
-            dataframe with computed heart rate ensemble data
+        ensemble : :class:`~biopsykit.utils.datatype_helper.MergedStudyDataDict`
+            ensemble data as ``MergedStudyDataDict``
 
         """
+        _assert_is_dtype(ensemble, dict)
         self.hr_ensemble[ensemble_id] = ensemble
 
     def get_hr_ensemble(self, ensemble_id: str):
@@ -865,7 +902,8 @@ class BaseProtocol:  # pylint:disable=too-many-public-methods
         if len(self.saliva_types) == 0:
             raise ValueError("No saliva data to plot!")
 
-        self.saliva_plot_params.update(**kwargs)
+        for key, val in self.saliva_plot_params.items():
+            kwargs.setdefault(key, val)
 
         if isinstance(saliva_type, str):
             saliva_type = [saliva_type]
@@ -948,8 +986,8 @@ class BaseProtocol:  # pylint:disable=too-many-public-methods
         :func:`~biopsykit.plotting.feature_boxplot`
             plot features as boxplot
 
-
         """
+        # TODO: add support for computing saliva features
         return plot.saliva_feature_boxplot(
             self.saliva_data[saliva_type], x, saliva_type, feature, stats_kwargs, **kwargs
         )
@@ -1008,7 +1046,7 @@ class BaseProtocol:  # pylint:disable=too-many-public-methods
     def hr_ensemble_plot(
         self, ensemble_id: str, subphases: Optional[Dict[str, Dict[str, int]]] = None, **kwargs
     ) -> Tuple[plt.Figure, plt.Axes]:
-        """Draw heart rate ensemble plot.
+        r"""Draw heart rate ensemble plot.
 
         Parameters
         ----------
@@ -1020,8 +1058,37 @@ class BaseProtocol:  # pylint:disable=too-many-public-methods
             dictionary with phases (keys) and subphases (values - dict with subphase names and subphase durations) or
             ``None`` if no subphases are present. Default: ``None``
         **kwargs : dict, optional
-            optional arguments for plot configuration to be passed to
-            :func:`~biopsykit.protocols.plotting.hr_ensemble_plot`
+            additional parameters to be passed to :func:`~biopsykit.protocols.plotting.hr_ensemble_plot` for
+            plot configuration, such as:
+
+            * ``ax``: pre-existing axes for the plot. Otherwise, a new figure and axes object is created and returned.
+            * ``palette``: color palette to plot data from different phases. If ``palette`` is a str then it is
+              assumed to be the name of a BioPsyKit palette (:const:`biopsykit.colors.FAU_COLORS`).
+            * ``figsize``: tuple specifying figure dimensions
+            * ``ensemble_alpha``: transparency value for ensemble plot errorband (around mean). Default: 0.3
+            * ``background_alpha``: transparency value for background spans (if subphases are present). Default: 0.2
+            * ``linestyle``: list of line styles for ensemble plots. Must match the number of phases to plot
+            * ``phase_text``: string pattern to customize phase name shown in legend with placeholder for subphase name.
+              Default: "{}"
+
+            To style axes:
+
+            * ``xlabel``: label of x axis. Default: ":math:`Time [s]`"
+            * ``xaxis_minor_tick_locator``: locator object to style x axis minor ticks. Default: 60 sec
+            * ``ylabel``: label of y axis. Default: ":math:`\Delta HR [\%]`"
+            * ``ylims``: y axis limits. Default: ``None`` to automatically infer limits
+
+            To style the annotations at the end of each phase:
+
+            * ``end_phase_text``: string pattern to customize text at the end of phase with placeholder for phase name.
+              Default: "{}"
+            * ``end_phase_line_color``: line color of vertical lines used to indicate end of phase. Default: "#e0e0e0"
+            * ``end_phase_line_width``: line width of vertical lines used  to indicate end of phase. Default: 2.0
+
+            To style legend:
+
+            * ``legend_loc``: location of legend. Default: "lower right"
+            * ``legend_bbox_to_anchor``: box that is used to position the legend in conjunction with ``legend_loc``
 
 
         Returns
@@ -1064,12 +1131,17 @@ class BaseProtocol:  # pylint:disable=too-many-public-methods
         result_id : str
             identifier of the heart rate result data to be plotted
         **kwargs
-            additional  parameters to be passed to the plot, such as:
+            additional parameters to be passed to :func:`~biopsykit.protocols.plotting.hr_mean_plot` for
+            plot configuration, such as:
 
             * ``ax``: pre-existing axes for the plot. Otherwise, a new figure and axes object is created
               and returned.
-            * ``colormap``: colormap to plot data from different phases
             * ``figsize``: tuple specifying figure dimensions
+            * ``palette``: color palette to plot data from different conditions. If ``palette`` is a str then it is
+              assumed to be the name of a BioPsyKit palette (:const:`biopsykit.colors.FAU_COLORS`).
+            * ``is_relative``: boolean indicating whether heart rate data is relative (in % relative to baseline)
+              or absolute (in bpm). Default: ``False``
+            * ``order``: list specifying the order of categorical values (i.e., conditions) along the x axis.
             * ``x_offset``: offset value to move different groups along the x axis for better visualization.
               Default: 0.05
             * ``xlabel``: label of x axis. Default: "Subphases" (if subphases are present)
@@ -1096,8 +1168,10 @@ class BaseProtocol:  # pylint:disable=too-many-public-methods
 
         See Also
         --------
+        :func:`~biopsykit.protocols.plotting.hr_mean_plot`
+            Plot heart rate data as lineplot with mean and standard error
         :func:`~biopsykit.plotting.lineplot`
-            Plot data as lineplot with mean and standard error
+            Plot generic data as lineplot with mean and standard error
 
         """
         data = mean_se_per_phase(self.hr_results[result_id])

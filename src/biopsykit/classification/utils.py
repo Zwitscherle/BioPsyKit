@@ -1,8 +1,8 @@
 """Module with utility functions for machine learning and classification applications."""
-from typing import Union, Tuple, Optional
+from typing import Optional, Tuple, Union
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 from sklearn.pipeline import Pipeline
 
 __all__ = ["factorize_subject_id", "prepare_df_sklearn", "split_train_test", "strip_df", "strip_labels"]
@@ -53,6 +53,7 @@ def strip_labels(data: Union[pd.DataFrame, pd.Series], label_col: Optional[str] 
         array with labels
 
     """
+    # TODO change to dataframe column
     if label_col is None:
         label_col = "label"
     if isinstance(data, pd.DataFrame):

@@ -4,19 +4,18 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
-
-from biopsykit.io import (
-    load_subject_condition_list,
-    load_questionnaire_data,
-    convert_time_log_datetime,
-    write_result_dict,
-)
-from biopsykit.utils.exceptions import ValidationError, FileExtensionError
-
-from biopsykit.io.io import load_time_log
 from nilspodlib import Dataset
 from pandas._testing import assert_frame_equal, assert_index_equal
 from pytz import UnknownTimeZoneError
+
+from biopsykit.io import (
+    convert_time_log_datetime,
+    load_questionnaire_data,
+    load_subject_condition_list,
+    write_result_dict,
+)
+from biopsykit.io.io import load_time_log
+from biopsykit.utils.exceptions import FileExtensionError, ValidationError
 
 TEST_FILE_PATH = Path(__file__).parent.joinpath("../test_data")
 
@@ -144,74 +143,109 @@ def result_dict_correct():
 
 class TestIoIo:
     @pytest.mark.parametrize(
-        "file_path, continuous_time, index_cols, phase_cols, expected",
+        "file_path, continuous_time, subject_col, condition_col, additional_index_cols, phase_cols, expected",
         [
-            ("time_log.csv", True, None, None, does_not_raise()),
-            ("time_log.xlsx", True, None, None, does_not_raise()),
-            ("time_log.csv", True, ["time"], None, pytest.raises(ValidationError)),
-            ("time_log.csv", True, "subject", None, does_not_raise()),
-            ("time_log.csv", True, ["subject", "time"], None, pytest.raises(ValidationError)),
-            ("time_log.csv", True, None, ["Baseline", "Intervention", "Stress", "Recovery"], does_not_raise()),
+            ("time_log.csv", True, None, None, None, None, does_not_raise()),
+            ("time_log.xlsx", True, None, None, None, None, does_not_raise()),
+            ("time_log.csv", True, "time", None, None, None, pytest.raises(ValidationError)),
+            ("time_log.csv", True, "subject", None, None, None, does_not_raise()),
+            ("time_log.csv", True, "subject", "condition", None, None, does_not_raise()),
+            ("time_log.csv", True, ["subject"], None, None, None, pytest.raises(ValidationError)),
+            ("time_log.csv", True, "subject", ["condition"], None, None, pytest.raises(ValidationError)),
+            ("time_log.csv", True, "subject", None, ["time"], None, pytest.raises(ValidationError)),
             (
                 "time_log.csv",
                 True,
                 None,
+                None,
+                None,
+                ["Baseline", "Intervention", "Stress", "Recovery"],
+                does_not_raise(),
+            ),
+            (
+                "time_log.csv",
+                True,
+                None,
+                None,
+                None,
                 ["Baseline", "Intervention", "Stress", "Postline"],
                 pytest.raises(ValidationError),
             ),
-            ("time_log_other_index_names.csv", True, None, None, does_not_raise()),
-            ("time_log_other_index_names.csv", True, ["subject", "condition"], None, pytest.raises(ValidationError)),
+            ("time_log_other_index_names.csv", True, None, None, None, None, pytest.raises(ValidationError)),
             (
                 "time_log_other_index_names.csv",
                 True,
-                {"ID": "subject", "Condition": "condition"},
+                "subject",
+                "condition",
+                None,
+                None,
+                pytest.raises(ValidationError),
+            ),
+            (
+                "time_log_other_index_names.csv",
+                True,
+                "ID",
+                "Condition",
+                None,
                 None,
                 does_not_raise(),
             ),
-            ("time_log_not_continuous.csv", True, None, None, does_not_raise()),
-            ("time_log_not_continuous.csv", False, None, None, does_not_raise()),
-            ("time_log.xlsx", False, None, None, pytest.raises(ValidationError)),
-            ("time_log_wrong_column_names.csv", False, None, None, pytest.raises(ValidationError)),
+            ("time_log_not_continuous.csv", True, None, None, None, None, does_not_raise()),
+            ("time_log_not_continuous.csv", False, None, None, None, None, does_not_raise()),
+            ("time_log.xlsx", False, None, None, None, None, pytest.raises(ValidationError)),
+            ("time_log_wrong_column_names.csv", False, None, None, None, None, pytest.raises(ValidationError)),
         ],
     )
-    def test_load_time_log_raises(self, file_path, continuous_time, index_cols, phase_cols, expected):
+    def test_load_time_log_raises(
+        self, file_path, continuous_time, subject_col, condition_col, additional_index_cols, phase_cols, expected
+    ):
         with expected:
             load_time_log(
                 file_path=TEST_FILE_PATH.joinpath(file_path),
-                index_cols=index_cols,
+                subject_col=subject_col,
+                condition_col=condition_col,
+                additional_index_cols=additional_index_cols,
                 phase_cols=phase_cols,
                 continuous_time=continuous_time,
             )
 
     @pytest.mark.parametrize(
-        "file_path, index_cols, phase_cols, continuous_time, expected",
+        "file_path, subject_col, condition_col, additional_index_cols, phase_cols, continuous_time, expected",
         [
-            ("time_log.csv", None, None, True, time_log_no_index()),
-            ("time_log.csv", ["subject", "condition"], None, True, time_log_correct()),
+            ("time_log.csv", None, None, None, None, True, time_log_correct()),
+            ("time_log.csv", "subject", "condition", None, None, True, time_log_correct()),
             (
                 "time_log_other_index_names.csv",
-                {"ID": "subject", "Condition": "condition"},
+                "ID",
+                "Condition",
+                None,
                 None,
                 True,
                 time_log_correct(),
             ),
             (
                 "time_log_not_continuous_other_index_names.csv",
-                {"ID": "subject", "Condition": "condition"},
+                "ID",
+                "Condition",
+                None,
                 None,
                 False,
                 time_log_not_continuous_correct(),
             ),
             (
                 "time_log.csv",
-                ["subject", "condition"],
+                "subject",
+                "condition",
+                None,
                 ["Baseline", "Intervention", "Stress", "Recovery", "End"],
                 True,
                 time_log_correct(),
             ),
             (
                 "time_log_other_column_names.csv",
-                ["subject", "condition"],
+                "subject",
+                "condition",
+                None,
                 {
                     "Phase1": "Baseline",
                     "Phase2": "Intervention",
@@ -224,10 +258,14 @@ class TestIoIo:
             ),
         ],
     )
-    def test_load_time_log_index_cols(self, file_path, index_cols, phase_cols, continuous_time, expected):
+    def test_load_time_log_index_cols(
+        self, file_path, subject_col, condition_col, additional_index_cols, phase_cols, continuous_time, expected
+    ):
         data_out = load_time_log(
             file_path=TEST_FILE_PATH.joinpath(file_path),
-            index_cols=index_cols,
+            subject_col=subject_col,
+            condition_col=condition_col,
+            additional_index_cols=additional_index_cols,
             phase_cols=phase_cols,
             continuous_time=continuous_time,
         )
@@ -245,8 +283,9 @@ class TestIoIo:
     def test_load_time_log(self, file_path, continuous_time, expected):
         data_out = load_time_log(
             file_path=TEST_FILE_PATH.joinpath(file_path),
+            subject_col="subject",
+            condition_col="condition",
             continuous_time=continuous_time,
-            index_cols=["subject", "condition"],
         )
         assert_frame_equal(data_out, expected)
 

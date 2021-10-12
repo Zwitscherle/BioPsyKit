@@ -1,11 +1,11 @@
 """Functions for computing sleep endpoints, i.e., parameters that characterize a recording during a sleep study."""
-from typing import Optional, Union, Sequence
-
 from numbers import Number
+from typing import Optional, Sequence, Union
 
 import numpy as np
 import pandas as pd
-from biopsykit.utils.datatype_helper import SleepEndpointDict, SleepEndpointDataFrame, _SleepEndpointDataFrame
+
+from biopsykit.utils.datatype_helper import SleepEndpointDataFrame, SleepEndpointDict, _SleepEndpointDataFrame
 
 
 def compute_sleep_endpoints(
@@ -20,15 +20,19 @@ def compute_sleep_endpoints(
       be set to the day before (because this night is assumed to "belong" to the day before).
     * ``sleep_onset``: Sleep Onset, i.e., time of falling asleep, in absolute time
     * ``wake_onset``: Wake Onset, i.e., time of awakening, in absolute time
+    * ``total_sleep_duration``: Total duration spent sleeping, i.e., the duration between the beginning of the first
+      sleep interval and the end of the last sleep interval, in minutes
     * ``net_sleep_duration``: Net duration spent sleeping, in minutes
-    * ``bed_interval_start``: Bed Interval Start, i.e, time when participant went to bed, in absolute time
-    * ``bed_interval_end``: Bed Interval End, i.e, time when participant left bed, in absolute time
-    * ``sleep_efficiency``: Sleep Efficiency, defined as the ratio between net sleep duration and sleep duration
+    * ``bed_interval_start``: Bed Interval Start, i.e., time when participant went to bed, in absolute time
+    * ``bed_interval_end``: Bed Interval End, i.e., time when participant left bed, in absolute time
+    * ``sleep_efficiency``: Sleep Efficiency, defined as the ratio between net sleep duration and total sleep duration
       in percent
-    * ``sleep_onset_latency``: Sleep Onset Latency, i.e., time in bed needed to fall asleep, in minutes
-    * ``getup_latency``: Get Up Latency, i.e., time in bed after awakening until getting up, in minutes
-    * ``wake_after_sleep_onset``: Wake After Sleep Onset (WASO), i.e., total time awake after falling asleep, in
-      minutes
+    * ``sleep_onset_latency``: Sleep Onset Latency, i.e., time in bed needed to fall asleep
+      (difference between *Sleep Onset* and *Bed Interval Start*), in minutes
+    * ``getup_latency``: Get Up Latency, i.e., time in bed after awakening until getting up (difference between
+      *Bed Interval End* and *Wake Onset*), in minutes
+    * ``wake_after_sleep_onset``: Wake After Sleep Onset (WASO), i.e., total time awake after falling asleep
+      (after *Sleep Onset* and before *Wake Onset*), in minutes
     * ``sleep_bouts``: List with start and end times of sleep bouts
     * ``wake_bouts``: List with start and end times of wake bouts
     * ``number_wake_bouts``: Total number of wake bouts
@@ -140,15 +144,13 @@ def compute_sleep_endpoints(
     return dict_result
 
 
-def endpoints_as_df(sleep_endpoints: SleepEndpointDict, subject_id: str) -> Optional[SleepEndpointDataFrame]:
+def endpoints_as_df(sleep_endpoints: SleepEndpointDict) -> Optional[SleepEndpointDataFrame]:
     """Convert ``SleepEndpointDict`` into ``SleepEndpointDataFrame``.
 
     Parameters
     ----------
     sleep_endpoints : :obj:`~biopsykit.utils.datatype_helper.SleepEndpointDict`
         dictionary with computed Sleep Endpoints
-    subject_id : str
-        Subject ID
 
     Returns
     -------
@@ -166,8 +168,10 @@ def endpoints_as_df(sleep_endpoints: SleepEndpointDict, subject_id: str) -> Opti
     sleep_bouts = [tuple(v) for v in sleep_bouts]
     wake_bouts = [tuple(v) for v in wake_bouts]
 
-    df = pd.DataFrame(sleep_endpoints, index=pd.Index([subject_id], name="subject"))
-    df.set_index("date", append=True, inplace=True)
+    index = pd.to_datetime(pd.Index([sleep_endpoints["date"]], name="date"))
+    sleep_endpoints.pop("date")
+
+    df = pd.DataFrame(sleep_endpoints, index=index)
     df.fillna(value=np.nan, inplace=True)
     df["sleep_bouts"] = None
     df["wake_bouts"] = None

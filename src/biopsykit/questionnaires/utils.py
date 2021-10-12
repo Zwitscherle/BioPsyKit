@@ -1,19 +1,15 @@
 """Module containing utility functions for manipulating and processing questionnaire data."""
-import warnings
 import re
-
-from typing import Optional, Union, Sequence, Tuple, Dict, Any
+import warnings
 from inspect import getmembers, isfunction
-
-from typing_extensions import Literal
+from typing import Any, Dict, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import pandas as pd
+from typing_extensions import Literal
 
-from biopsykit.utils._datatype_validation_helper import _assert_is_dtype, _assert_value_range, _assert_len_list
+from biopsykit.utils._datatype_validation_helper import _assert_is_dtype, _assert_len_list, _assert_value_range
 from biopsykit.utils.dataframe_handling import wide_to_long as wide_to_long_utils
-from biopsykit.questionnaires import questionnaires
-
 
 __all__ = [
     "bin_scale",
@@ -628,6 +624,8 @@ def compute_scores(
     >>> compute_scores(data, quest_dict)
 
     """
+    from biopsykit.questionnaires import questionnaires  # pylint:disable=import-outside-toplevel
+
     _assert_is_dtype(data, pd.DataFrame)
 
     df_scores = pd.DataFrame(index=data.index)
@@ -675,6 +673,8 @@ def get_supported_questionnaires() -> Dict[str, str]:
         dictionary with questionnaire names (keys) and description (values)
 
     """
+    from biopsykit.questionnaires import questionnaires  # pylint:disable=import-outside-toplevel
+
     funcs = dict(getmembers(questionnaires, isfunction))
     quests = {}
     for key, value in funcs.items():

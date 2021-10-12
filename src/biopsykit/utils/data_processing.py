@@ -1,36 +1,34 @@
 """Module providing various functions for processing more complex structured data (e.g., collected during a study)."""
 import warnings
-from typing import Sequence, Union, Dict, Optional, Tuple, Any
-
-# from tqdm.notebook import tqdm
+from typing import Any, Dict, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import pandas as pd
 from scipy import interpolate
 
 from biopsykit.utils._datatype_validation_helper import (
-    _assert_is_dtype,
     _assert_dataframes_same_length,
     _assert_has_index_levels,
     _assert_has_multiindex,
+    _assert_is_dtype,
 )
-from biopsykit.utils.functions import se
 from biopsykit.utils.array_handling import sanitize_input_1d
 from biopsykit.utils.datatype_helper import (
-    SubjectConditionDict,
-    SubjectConditionDataFrame,
-    is_subject_condition_dataframe,
-    is_subject_condition_dict,
-    SubjectDataDict,
-    StudyDataDict,
-    MergedStudyDataDict,
-    is_merged_study_data_dict,
-    is_subject_data_dict,
-    is_study_data_dict,
     MeanSeDataFrame,
+    MergedStudyDataDict,
+    StudyDataDict,
+    SubjectConditionDataFrame,
+    SubjectConditionDict,
+    SubjectDataDict,
     _MeanSeDataFrame,
     is_mean_se_dataframe,
+    is_merged_study_data_dict,
+    is_study_data_dict,
+    is_subject_condition_dataframe,
+    is_subject_condition_dict,
+    is_subject_data_dict,
 )
+from biopsykit.utils.functions import se
 
 
 def _split_data_series(data: pd.DataFrame, time_intervals: pd.Series, include_start: bool) -> Dict[str, pd.DataFrame]:
@@ -158,22 +156,22 @@ def exclude_subjects(
         _assert_is_dtype(data, pd.DataFrame)
         if index_name in data.index.names:
             level_values = data.index.get_level_values(index_name)
-            if (level_values.dtype == np.object and all([isinstance(s, str) for s in excluded_subjects])) or (
-                level_values.dtype == np.int and all([isinstance(s, int) for s in excluded_subjects])
+            if (level_values.dtype == np.object and all(isinstance(s, str) for s in excluded_subjects)) or (
+                level_values.dtype == np.int and all(isinstance(s, int) for s in excluded_subjects)
             ):
-                cleaned_data[key] = _exclude_single_subject(data, excluded_subjects, index_name)
-            raise ValueError("{}: dtypes of index and subject ids to be excluded do not match!".format(key))
-        raise ValueError("No '{}' level in index!".format(index_name))
+                cleaned_data[key] = _exclude_single_subject(data, excluded_subjects, index_name, key)
+            else:
+                raise ValueError("{}: dtypes of index and subject ids to be excluded do not match!".format(key))
+        else:
+            raise ValueError("No '{}' level in index!".format(index_name))
     if len(cleaned_data) == 1:
         cleaned_data = list(cleaned_data.values())[0]
     return cleaned_data
 
 
 def _exclude_single_subject(
-    data: pd.DataFrame,
-    excluded_subjects: Union[Sequence[str], Sequence[int]],
-    index_name: str,
-):
+    data: pd.DataFrame, excluded_subjects: Union[Sequence[str], Sequence[int]], index_name: str, dataset_name: str
+) -> pd.DataFrame:
     # dataframe index and subjects are both strings or both integers
     try:
         if isinstance(data.index, pd.MultiIndex):
@@ -182,7 +180,8 @@ def _exclude_single_subject(
         # Regular Index
         return data.drop(index=excluded_subjects)
     except KeyError:
-        warnings.warn("Not all subjects of {} exist in the dataset!".format(excluded_subjects))
+        warnings.warn("Not all subjects of {} exist in '{}'!".format(excluded_subjects, dataset_name))
+        return data
 
 
 def normalize_to_phase(subject_data_dict: SubjectDataDict, phase: Union[str, pd.DataFrame]) -> SubjectDataDict:
@@ -490,13 +489,29 @@ def split_dict_into_subphases(
             subphase_times = get_subphase_durations(value, subphases)
             subphase_dict = {}
             for subphase, times in zip(subphases.keys(), subphase_times):
-                subphase_dict[subphase] = value.iloc[times[0] : times[1]]
+                if isinstance(value.index, pd.DatetimeIndex):
+                    # slice the current subphase by dropping the preceding subphases
+                    value_cpy = value.drop(value.first("{}s".format(times[0])).index)
+                    value_cpy = value_cpy.first("{}s".format(times[1] - times[0]))
+                    subphase_dict[subphase] = value_cpy
+                else:
+                    subphase_dict[subphase] = value.iloc[times[0] : times[1]]
             result_dict[key] = subphase_dict
     return result_dict
 
 
-def get_subphase_durations(data: pd.DataFrame, subphases: Dict[str, int]) -> Sequence[Tuple[int, int]]:
+def get_subphase_durations(
+    data: pd.DataFrame, subphases: Dict[str, Union[int, Tuple[int, int]]]
+) -> Sequence[Tuple[int, int]]:
     """Compute subphase durations from dataframe.
+
+    The subphases can be specified in two different ways:
+
+    * If the dictionary entries in ``subphases`` are integer, it's assumed that subphases are consecutive,
+      i.e., each subphase begins right after the previous one, and the entries indicate the *durations* of each
+      subphase. The start and end times of each subphase will then be computed from the subphase durations.
+    * If the dictionary entries in ``subphases`` are tuples, it's assumed that the start and end times of each
+      subphase are directly provided.
 
     .. note::
         If the duration of the last subphase is unknown (e.g., because it has variable length) this can be
@@ -510,20 +525,37 @@ def get_subphase_durations(data: pd.DataFrame, subphases: Dict[str, int]) -> Seq
         dataframe with data from one phase. Used to compute the duration of the last subphase if this subphase
         is expected to have variable duration.
     subphases : dict
-        dictionary with subphase names (keys) and subphase durations (values) in seconds
+        dictionary with subphase names as keys and subphase durations (as integer) or start and end
+        times (as tuples of integer) as values in seconds
 
     Returns
     -------
     list
         list with start and end times of each subphase in seconds relative to beginning of the phase
 
+
+    Examples
+    --------
+    >>> from biopsykit.utils.data_processing import get_subphase_durations
+    >>> # Option 1: Subphases consecutive, subphase durations provided
+    >>> get_subphase_durations(data, {"Start": 60, "Middle": 120, "End": 60})
+    >>> # Option 2: Subphase start and end times provided
+    >>> get_subphase_durations(data, {"Start": (0, 50), "Middle": (60, 160), "End": (180, 240)})
+
     """
-    subphase_durations = list(subphases.values())
-    times_cum = np.cumsum(subphase_durations)
-    if subphase_durations[-1] == 0:
-        # last subphase has duration 0 => end of last subphase is length of dataframe
-        times_cum[-1] = len(data)
-    subphase_times = list(zip([0] + list(times_cum), times_cum))
+    subphase_durations = np.array(list(subphases.values()))
+    if subphase_durations.ndim == 1:
+        # 1d array => subphase values are integer => they are consecutive and each entry is the duration
+        # of the subphase, so the start and end times of each subphase must be computed
+        times_cum = np.cumsum(subphase_durations)
+        if subphase_durations[-1] == 0:
+            # last subphase has duration 0 => end of last subphase is length of dataframe
+            times_cum[-1] = len(data)
+        subphase_times = list(zip([0] + list(times_cum), times_cum))
+    else:
+        # 2d array => subphase values are tuples => start end end time of each subphase are already provided and do
+        # not need to be computed
+        subphase_times = subphase_durations
     return subphase_times
 
 
@@ -597,152 +629,6 @@ def _splits_subject_conditions(data_dict: Dict[str, Any], subject_list: Sequence
     return {key: _splits_subject_conditions(value, subject_list) for key, value in data_dict.items()}
 
 
-# def param_subphases(
-#     ecg_processor: Optional["EcgProcessor"] = None,
-#     dict_ecg: Optional[Dict[str, pd.DataFrame]] = None,
-#     dict_rpeaks: Optional[Dict[str, pd.DataFrame]] = None,
-#     subphases: Optional[Sequence[str]] = None,
-#     subphase_durations: Optional[Sequence[int]] = None,
-#     param_types: Optional[Union[str, Sequence[str]]] = "all",
-#     sampling_rate: Optional[int] = 256,
-#     include_total: Optional[bool] = True,
-#     title: Optional[str] = None,
-# ) -> pd.DataFrame:
-#     """
-#     Computes specified parameters (HRV / RSA / ...) over phases and subphases **for one subject**.
-#
-#     To use this function, either simply pass an ``EcgProcessor`` object or two dictionaries
-#     ``dict_ecg`` and ``dict_rpeaks`` resulting from ``EcgProcessor.ecg_process()``.
-#
-#     Parameters
-#     ----------
-#     ecg_processor : EcgProcessor, optional
-#         `EcgProcessor` object
-#     dict_ecg : dict, optional
-#         dict with dataframes of processed ECG signals. Output from `EcgProcessor.ecg_process()`.
-#     dict_rpeaks : dict, optional
-#         dict with dataframes of processed R peaks. Output from `EcgProcessor.ecg_process()`.
-#     subphases : list of int
-#         list of subphase names
-#     subphase_durations : list of str
-#         list of subphase durations
-#     param_types : list or str, optional
-#         list with parameter types to compute or 'all' to compute all available parameters. Choose from a subset of
-#         ['hrv', 'rsa'] to compute HRV and RSA parameters, respectively.
-#     sampling_rate : float, optional
-#         Sampling rate of recorded data. Not needed if ``ecg_processor`` is supplied as parameter. Default: 256 Hz
-#     include_total : bool, optional
-#         ``True`` to also compute parameters over the complete phases (in addition to only over subphases),
-#         ``False`` to only compute parameters over the single subphases. Default: ``True``
-#     title : str, optional
-#         Optional title of the processing progress bar. Default: ``None``
-#
-#     Returns
-#     -------
-#     pd.DataFrame
-#         dataframe with computed parameters over the single subphases
-#     """
-#     import biopsykit.signals.ecg as ecg
-#
-#     if ecg_processor is None and dict_rpeaks is None and dict_ecg is None:
-#         raise ValueError("Either `ecg_processor` or `dict_rpeaks` and `dict_ecg` must be passed as arguments!")
-#
-#     if subphases is None or subphase_durations is None:
-#         raise ValueError("Both `subphases` and `subphase_durations` are required as parameter!")
-#
-#     # TODO change
-#     # get all desired parameter types
-#     possible_param_types = {
-#         "hrv": ecg.EcgProcessor.hrv_process,
-#         # "rsp": ecg.EcgProcessor.rsp_rsa_process,
-#     }
-#     if param_types == "all":
-#         param_types = possible_param_types
-#
-#     if isinstance(param_types, str):
-#         param_types = {param_types: possible_param_types[param_types]}
-#     if not all([param in possible_param_types for param in param_types]):
-#         raise ValueError(
-#             "`param_types` must all be of {}, not {}".format(possible_param_types.keys(), param_types.keys())
-#         )
-#
-#     param_types = {param: possible_param_types[param] for param in param_types}
-#
-#     if ecg_processor:
-#         sampling_rate = ecg_processor.sampling_rate
-#         dict_rpeaks = ecg_processor.rpeaks
-#         dict_ecg = ecg_processor.ecg_result
-#
-#     if "rsp" in param_types and dict_ecg is None:
-#         raise ValueError("`dict_ecg` must be passed if param_type is {}!".format(param_types))
-#
-#     index_name = "subphase"
-#     # dict to store results. one entry per parameter and a list of dataframes per MIST phase
-#     # that will later be concated to one large dataframes
-#     dict_df_subphases = {param: list() for param in param_types}
-#
-#     # iterate through all phases in the data
-#     for (phase, rpeaks), (ecg_phase, ecg_data) in tqdm(zip(dict_rpeaks.items(), dict_ecg.items()), desc=title):
-#         rpeaks = rpeaks.copy()
-#         ecg_data = ecg_data.copy()
-#
-#         # dict to store intermediate results of subphases. one entry per parameter with a
-#         # list of dataframes per subphase that will later be concated to one dataframe per MIST phase
-#         dict_subphases = {param: list() for param in param_types}
-#         if include_total:
-#             # compute HRV, RSP over complete phase
-#             for param_type, param_func in param_types.items():
-#                 dict_subphases[param_type].append(
-#                     param_func(
-#                         ecg_signal=ecg_data,
-#                         rpeaks=rpeaks,
-#                         index="Total",
-#                         index_name=index_name,
-#                         sampling_rate=sampling_rate,
-#                     )
-#                 )
-#
-#         if phase not in ["Part1", "Part2"]:
-#             # skip Part1, Part2 for subphase parameter analysis (parameters in total are computed above)
-#             for subph, dur in zip(subphases, subphase_durations):
-#                 # get the first xx seconds of data (i.e., get only the current subphase)
-#                 if dur > 0:
-#                     df_subph_rpeaks = rpeaks.first("{}S".format(dur))
-#                 else:
-#                     # duration of 0 seconds = Feedback Interval, don't cut the beginning,
-#                     # use all remaining data
-#                     df_subph_rpeaks = rpeaks
-#                 # ECG does not need to be sliced because rpeaks are already sliced and
-#                 # will select only the relevant ECG signal parts anyways
-#                 df_subph_ecg = ecg_data
-#
-#                 for param_type, param_func in param_types.items():
-#                     # compute HRV, RSP over subphases
-#                     dict_subphases[param_type].append(
-#                         param_func(
-#                             ecg_signal=df_subph_ecg,
-#                             rpeaks=df_subph_rpeaks,
-#                             index=subph,
-#                             index_name=index_name,
-#                             sampling_rate=sampling_rate,
-#                         )
-#                     )
-#
-#                 # remove the currently analyzed subphase of data
-#                 # (so that the next subphase is first in the next iteration)
-#                 rpeaks = rpeaks.drop(df_subph_rpeaks.index)
-#
-#         for param in dict_subphases:
-#             # concat dataframe of all subphases to one dataframe per MIST phase and add to parameter dict
-#             dict_df_subphases[param].append(pd.concat(dict_subphases[param]))
-#
-#     # concat all dataframes together to one big result dataframes
-#     return pd.concat(
-#         [pd.concat(dict_df, keys=dict_rpeaks.keys(), names=["phase"]) for dict_df in dict_df_subphases.values()],
-#         axis=1,
-#     )
-
-
 def mean_per_subject_dict(data: Dict[str, Any], dict_levels: Sequence[str], param_name: str) -> pd.DataFrame:
     """Compute mean values of time-series data from a nested dictionary.
 
@@ -781,6 +667,7 @@ def mean_per_subject_dict(data: Dict[str, Any], dict_levels: Sequence[str], para
             # nested dictionary
             result_data[key] = mean_per_subject_dict(value, dict_levels[1:], param_name)
         else:
+            value.columns.name = "subject"
             if len(value.columns) == 1:
                 one_col_df = True
             df = pd.DataFrame(value.mean(axis=0), columns=[param_name])
@@ -818,7 +705,7 @@ def mean_se_per_phase(data: pd.DataFrame) -> MeanSeDataFrame:
     group_cols = list(data.index.names)
     group_cols.remove("subject")
 
-    data = data.groupby(group_cols).agg([np.mean, se])
+    data = data.groupby(group_cols, sort=False).agg([np.mean, se])
     is_mean_se_dataframe(data)
 
     return _MeanSeDataFrame(data)

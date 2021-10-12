@@ -1,18 +1,14 @@
 """Module providing classes and utility functions for handling log data from *CARWatch App*."""
 import json
 import warnings
-from typing import Dict, Sequence, Optional, Union
 from datetime import datetime
-
-from typing_extensions import Literal
+from typing import Dict, Optional, Sequence, Union
 
 import numpy as np
 import pandas as pd
+from typing_extensions import Literal
 
-from IPython.display import display, Markdown
-
-import biopsykit.carwatch_logs.log_actions as log_actions
-import biopsykit.carwatch_logs.log_extras as log_extras
+from biopsykit.carwatch_logs import log_actions, log_extras
 from biopsykit.utils.time import tz
 
 subject_conditions: Dict[str, str] = {
@@ -278,6 +274,14 @@ class LogData:
 
     def print_info(self):
         """Display Markdown-formatted log data information."""
+        try:
+            from IPython.core.display import Markdown, display  # pylint:disable=import-outside-toplevel
+        except ImportError as e:
+            raise ImportError(
+                "Displaying LogData information failed because "
+                "IPython cannot be imported. Install it via 'pip install ipython'."
+            ) from e
+
         display(Markdown("Subject ID: **{}**".format(self.subject_id)))
         display(Markdown("Condition: **{}**".format(self.condition)))
         display(Markdown("App Version: **{}**".format(self.app_version)))

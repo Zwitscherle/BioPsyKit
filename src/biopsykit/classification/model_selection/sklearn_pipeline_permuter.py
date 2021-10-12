@@ -2,22 +2,20 @@
 from itertools import product
 from pathlib import Path
 from shutil import rmtree
-from typing import Optional, Dict, Any, Sequence, Union, Tuple
-
-from joblib import Memory
+from typing import Any, Dict, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import pandas as pd
-
+from joblib import Memory
 from sklearn.base import BaseEstimator
 from sklearn.model_selection import BaseCrossValidator
 from sklearn.pipeline import Pipeline
-from tqdm.notebook import tqdm
+from tqdm.auto import tqdm
 
-from biopsykit.classification.utils import _PipelineWrapper
 from biopsykit.classification.model_selection import nested_cv_grid_search
+from biopsykit.classification.utils import _PipelineWrapper
 from biopsykit.utils._datatype_validation_helper import _assert_file_extension
-from biopsykit.utils._types import path_t, T
+from biopsykit.utils._types import T, path_t
 
 __all__ = ["SklearnPipelinePermuter"]
 
@@ -378,17 +376,17 @@ class SklearnPipelinePermuter:
 
         """
         list_metric_summary = []
-        for param_key in self.grid_searches:
+        for param_key, param_value in self.grid_searches.items():
             param_dict = {"pipeline_{}".format(key): val for key, val in param_key}
-            conf_matrix = np.sum(self.grid_searches[param_key]["conf_matrix"], axis=0)
-            true_labels = np.array(self.grid_searches[param_key]["true_labels"]).ravel()
-            predicted_labels = np.array(self.grid_searches[param_key]["predicted_labels"]).ravel()
+            conf_matrix = np.sum(param_value["conf_matrix"], axis=0)
+            true_labels = np.array(param_value["true_labels"], dtype="object").ravel()
+            predicted_labels = np.array(param_value["predicted_labels"], dtype="object").ravel()
             df_metric = pd.DataFrame(param_dict, index=[0])
             df_metric["conf_matrix"] = [list(conf_matrix.flatten())]
             df_metric["true_labels"] = [true_labels]
             df_metric["predicted_labels"] = [predicted_labels]
 
-            for key in self.grid_searches[param_key]:
+            for key in param_value:
                 if "test" in key:
                     test_scores = self.grid_searches[param_key][key]
                     df_metric["mean_{}".format(key)] = np.mean(test_scores)
@@ -425,10 +423,10 @@ class SklearnPipelinePermuter:
 
         """
         be_list = []
-        for param_key in self.grid_searches:
+        for param_key, param_value in self.grid_searches.items():
             param_dict = {"pipeline_{}".format(key): val for key, val in param_key}
             df_be = pd.DataFrame(param_dict, index=[0])
-            df_be["best_estimator"] = _PipelineWrapper(self.grid_searches[param_key]["best_estimator"])
+            df_be["best_estimator"] = _PipelineWrapper(param_value["best_estimator"])
             df_be = df_be.set_index(list(df_be.columns)[:-1])
             be_list.append(df_be)
 

@@ -1,11 +1,10 @@
+import platform
 import re
-import shutil
 import subprocess
 from pathlib import Path
-import platform
 
 DOIT_CONFIG = {
-    "default_tasks": ["format", "test", "lint"],
+    "default_tasks": ["format", "lint", "test"],
     "backend": "json",
 }
 
@@ -14,18 +13,18 @@ HERE = Path(__file__).parent
 
 def task_format():
     """Reformat all files using black."""
-    return {"actions": [["black", HERE]], "verbosity": 1}
+    return {"actions": [["black", HERE], ["isort", HERE]], "verbosity": 1}
 
 
 def task_format_check():
     """Check, but not change, formatting using black."""
-    return {"actions": [["black", HERE, "--check"]], "verbosity": 1}
+    return {"actions": [["black", HERE, "--check"], ["isort", HERE, "--check-only"]], "verbosity": 1}
 
 
 def task_test():
     """Run Pytest with coverage."""
     return {
-        "actions": ["pytest --cov=biopsykit %(paras)s"],
+        "actions": ["pytest --cov=biopsykit %(paras)s --cov-report=xml"],
         "params": [{"name": "paras", "short": "p", "long": "paras", "default": ""}],
         "verbosity": 2,
     }
@@ -84,11 +83,15 @@ def update_version(version):
         .strip()
         .split(" ", 1)[1]
     )
-    update_version_strings(HERE / "src/biopsykit/__init__.py", new_version)
+    update_version_strings(HERE.joinpath("src/biopsykit/__init__.py"), new_version)
 
 
 def task_update_version():
-    """Bump the version in pyproject.toml and gaitmap.__init__ ."""
+    """Bump the version in pyproject.toml and biopsykit.__init__ .
+
+    Pass the options "major", "minor", or "patch" with the `-v` argument to bump the major, minor, or patch version,
+    respectively.
+    """
     return {
         "actions": [(update_version,)],
         "params": [{"name": "version", "short": "v", "default": None}],

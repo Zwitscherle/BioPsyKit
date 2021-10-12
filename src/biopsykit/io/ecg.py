@@ -6,11 +6,10 @@ from typing import Optional
 
 import pandas as pd
 
-from biopsykit.io import write_pandas_dict_excel
 from biopsykit.utils._datatype_validation_helper import _assert_file_extension
 from biopsykit.utils._types import path_t
-from biopsykit.utils.datatype_helper import HeartRatePhaseDict, is_hr_phase_dict, HeartRateSubjectDataDict
-from biopsykit.utils.file_handling import is_excel_file, get_subject_dirs
+from biopsykit.utils.datatype_helper import HeartRatePhaseDict, HeartRateSubjectDataDict, is_hr_phase_dict
+from biopsykit.utils.file_handling import get_subject_dirs, is_excel_file
 from biopsykit.utils.time import tz
 
 __all__ = ["load_hr_phase_dict", "load_hr_phase_dict_folder", "write_hr_phase_dict"]
@@ -221,6 +220,8 @@ def write_hr_phase_dict(hr_phase_dict: HeartRatePhaseDict, file_path: path_t):
     ~biopsykit.io.write_pandas_dict_excel : Write dictionary with pandas dataframes to Excel file
 
     """
+    from biopsykit.io import write_pandas_dict_excel  # pylint:disable=import-outside-toplevel
+
     # assert that file path is an Excel file
     is_excel_file(file_path)
 

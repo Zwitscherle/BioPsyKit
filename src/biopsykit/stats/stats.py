@@ -1,13 +1,12 @@
 """Module for setting up a pipeline for statistical analysis."""
 from pathlib import Path
-from typing import Dict, Sequence, Union, Tuple, Optional, List
-from typing_extensions import Literal
+from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 import pandas as pd
 import pingouin as pg
-from IPython.core.display import display, Markdown
-from biopsykit.utils._datatype_validation_helper import _assert_file_extension
+from typing_extensions import Literal
 
+from biopsykit.utils._datatype_validation_helper import _assert_file_extension, _assert_has_index_levels
 from biopsykit.utils._types import path_t
 
 MAP_STAT_TESTS = {
@@ -31,7 +30,7 @@ MAP_STAT_PARAMS = {
     "rm_anova": ["dv", "within", "subject"],
     "mixed_anova": ["dv", "between", "within", "subject"],
     "kruskal": ["dv", "between"],
-    "pairwise_ttests": ["dv", "between", "within", "subject", "effsize", "tail", "padjust", "parametric"],
+    "pairwise_ttests": ["dv", "between", "within", "subject", "effsize", "tail", "parametric", "padjust"],
     "pairwise_tukey": ["dv", "between", "effsize"],
     "pairwise_gameshowell": ["dv", "between", "effsize"],
 }
@@ -78,7 +77,7 @@ _sig_cols = ["p-corr", "p-tukey", "p-unc", "pval"]
 class StatsPipeline:
     """Class to set up a pipeline for statistical analysis."""
 
-    def __init__(self, steps: Sequence[Tuple[str, str]], params: Dict[str, str]):
+    def __init__(self, steps: Sequence[Tuple[str, str]], params: Dict[str, str], **kwargs):
         """Class to set up a pipeline for statistical analysis.
 
         The purpose of such a pipeline is to assemble several steps of a typical statistical analysis procedure while
@@ -86,12 +85,12 @@ class StatsPipeline:
         It enables setting parameters of the various steps using their names and the parameter name separated by a "__",
         as in the examples below.
 
-        The interface of this class is inspired by the scikit-learn Pipeline for ML tasks
+        The interface of this class is inspired by the scikit-learn Pipeline for machine learning tasks
         (:class:`~sklearn.pipeline.Pipeline`).
 
-        All functions methods used are from the Pingouin library (https://pingouin-stats.org/) for statistical analysis.
+        All functions used are from the ``pingouin`` library (https://pingouin-stats.org/) for statistical analysis.
 
-        The different steps of statistical analysis is divided into different categories:
+        The different steps of statistical analysis can be divided into categories:
 
         * *Preparatory Analysis* (``prep``): Analyses applied to the data before performing the actual statistical
           analysis. Currently supported functions are:
@@ -127,21 +126,24 @@ class StatsPipeline:
           * ``pairwise_gameshowell``: Pairwise Games-Howell post-hoc test.
             See :func:`~pingouin.pairwise_gameshowell` for further information.
 
-        Initialize new ``StatsPipeline`` instance.
-
         A ``StatsPipeline`` consists of a list of tuples specifying the individual ``steps`` of the pipeline.
         The first value of each tuple indicates the category this step belongs to (``prep``, ``test``, or ``posthoc``),
         the second value indicates the analysis function to use in this step (e.g., ``normality``, or ``rm_anova``).
 
         Furthermore, a ``params`` dictionary specifying the parameters and variables for statistical analysis
         needs to be supplied. Parameters can either be specified *globally*, i.e., for all steps in the pipeline
-        (the default), or *locally*, i.e., only for one specific category, by prepending the category,
-        separated by a "__". The parameters depend on the type of analysis used in the pipeline. Examples are:
+        (the default), or *locally*, i.e., only for one specific category, by prepending the category and separating it
+        from the parameter name by a `__`. The parameters depend on the type of analysis used in the pipeline.
+
+        Examples are:
 
         * ``dv``: column name of the dependent variable
         * ``between``: column name of the between-subject factor
         * ``within``: column name of the within-subject factor
         * ``effsize``: type of effect size to compute (if applicable)
+        * ``multicomp``: whether (and how) to apply multi-comparison correction of p-values to the *last* step in the
+          pipeline (either "test" or "posthoc") using :meth:`~biopsykit.stats.StatsPipeline.multicomp`.
+          The arguments for the call to :meth:`~biopsykit.stats.StatsPipeline.multicomp` are supplied via dictionary.
         * ...
 
         Parameters
@@ -150,6 +152,12 @@ class StatsPipeline:
             list of tuples specifying statistical analysis pipeline
         params : dict
             dictionary with parameter names and their values
+        **kwargs : dict
+            additional arguments, such as:
+
+            * ``round``: Set the default decimal rounding of the output dataframes or ``None`` to disable rounding.
+              Default: Rounding to 4 digits on p-value columns only. See :meth:`~pandas.DataFrame.round` for further
+              options.
 
         """
         self.steps = steps
@@ -157,6 +165,7 @@ class StatsPipeline:
         self.data: Optional[pd.DataFrame] = None
         self.results: Dict[str, pd.DataFrame] = {}
         self.category_steps = {}
+        self.round = kwargs.get("round", {col: 4 for col in _sig_cols})
         for step in self.steps:
             self.category_steps.setdefault(step[0], [])
             self.category_steps[step[0]].append(step[1])
@@ -179,7 +188,7 @@ class StatsPipeline:
         pipeline_results = {}
         data = data.reset_index()
 
-        for step in self.steps:
+        for i, step in enumerate(self.steps):
             general_params = {key: value for key, value in self.params.items() if len(key.split("__")) == 1}
             specific_params = {
                 key.split("__")[1]: value
@@ -197,17 +206,19 @@ class StatsPipeline:
 
             test_func = MAP_STAT_TESTS[step[1]]
             if len(grouper) > 0:
-                result = data.groupby(grouper).apply(
+                result = data.groupby(grouper, sort=False).apply(
                     lambda df: test_func(data=df, **specific_params, **params)  # pylint:disable=cell-var-from-loop
                 )
             else:
                 result = test_func(data=data, **specific_params, **params)
 
-            if step[0] == "posthoc" and "padjust" in general_params and "padjust" not in params:
-                # apply p-adjustment for posthoc testing if it was specified in the pipeline
-                # but do it only manually if it's not supported by the test function
-                # (otherwise it would be in the 'params' dict)
-                result = self.multicomp(result, method=general_params["padjust"])
+            if i == len(self.steps) - 1 and "multicomp" in general_params:
+                # apply multi-comparison correction (p-adjustment) for the last analysis step in the pipeline
+                # if it was enabled
+                multicomp_dict = general_params.get("multicomp")
+                if multicomp_dict is None:
+                    multicomp_dict = {}
+                result = self.multicomp(result, **multicomp_dict)
 
             pipeline_results[step[1]] = result
 
@@ -262,6 +273,14 @@ class StatsPipeline:
         return {}
 
     def _ipython_display_(self):
+        try:
+            from IPython.core.display import display  # pylint:disable=import-outside-toplevel
+        except ImportError as e:
+            raise ImportError(
+                "Displaying statistics results failed because "
+                "IPython cannot be imported. Install it via 'pip install ipython'."
+            ) from e
+
         display(self._param_df().T)
         display(self._result_df().T)
 
@@ -298,8 +317,15 @@ class StatsPipeline:
             * ``grouped``: ``True`` to group results by the variable "groupby" specified in the parameter
               dictionary when initializing the ``StatsPipeline`` instance.
 
-
         """
+        try:
+            from IPython.core.display import Markdown, display  # pylint:disable=import-outside-toplevel
+        except ImportError as e:
+            raise ImportError(
+                "Displaying statistics results failed because "
+                "IPython cannot be imported. Install it via 'pip install ipython'."
+            ) from e
+
         sig_only = self._get_sig_only(sig_only)
         grouped = kwargs.pop("grouped", False)
 
@@ -331,22 +357,19 @@ class StatsPipeline:
     def _display_results(
         self, sig_only: Dict[str, bool], groupby: Optional[str] = None, group_key: Optional[str] = None, **kwargs
     ):
+        try:
+            from IPython.core.display import Markdown, display  # pylint:disable=import-outside-toplevel
+        except ImportError as e:
+            raise ImportError(
+                "Displaying statistics results failed because "
+                "IPython cannot be imported. Install it via 'pip install ipython'."
+            ) from e
+
         display(Markdown("""<font size="3"><b> Overview </b></font>"""))
         display(self)
         for category, steps in self.category_steps.items():
             if kwargs.get(category, True):
-                display(Markdown("""<font size="3"><b> {} </b></font>""".format(MAP_CATEGORIES[category])))
-                for step in steps:
-                    display(Markdown("**{}**".format(MAP_NAMES[step])))
-                    df = self.results[step]
-                    if groupby:
-                        df = df.xs(group_key, level=groupby)
-                    if sig_only.get(category, False):
-                        df = self._filter_sig(df)
-                        if df.empty:
-                            display(Markdown("*No significant p-values.*"))
-                            continue
-                    display(df)
+                self._display_category(category, steps, sig_only, groupby, group_key)
 
     @staticmethod
     def _filter_sig(data: pd.DataFrame) -> Optional[pd.DataFrame]:
@@ -545,15 +568,26 @@ class StatsPipeline:
         df = df.rename(columns=MAP_LATEX).reindex(index_labels.keys()).rename(index=index_labels)
         return df
 
-    def multicomp(self, stats_data: pd.DataFrame, method: Optional[str] = "bonf") -> pd.DataFrame:
-        """Apply multi-test comparison to results from statistical analysis.
+    def multicomp(
+        self,
+        stats_category_or_data: Union[STATS_CATEGORY, pd.DataFrame],
+        levels: Optional[Union[bool, str, Sequence[str]]] = False,
+        method: Optional[str] = "bonf",
+    ) -> pd.DataFrame:
+        """Apply multi-comparison correction to results from statistical analysis.
 
-        This function will add a new column ``p-corr`` to the dataframe which contains the adjusted p values.
+        This function will add a new column ``p-corr`` to the dataframe which contains the adjusted p-values.
+        The level(s) on which to perform multi-comparison correction on can be specified by the ``levels`` parameter.
 
         Parameters
         ----------
-        stats_data : :class:`~pandas.DataFrame`
+        stats_category_or_data : :class:`~pandas.DataFrame`
             dataframe with results from statistical analysis
+        levels: bool, str, or list of str, optional
+            index level(s) on which to perform multi-comparison correction on, ``True`` to perform multi-comparison
+            correction on the *whole* dataset (i.e., on *no* particular index level), or ``False`` or ``None`` to
+            perform multi-comparison correction on **all** index levels.
+            Default: ``False``
         method : str, optional
             method used for testing and adjustment of p-values. See :func:`~pingouin.multicomp` for the
             available methods. Default: "bonf"
@@ -561,14 +595,37 @@ class StatsPipeline:
         Returns
         -------
         :class:`~pandas.DataFrame`
-            dataframe with adjusted p values
+            dataframe with adjusted p-values
 
         """
-        data = stats_data
-        if stats_data.index.nlevels > 1:
-            data = stats_data.groupby(list(stats_data.index.names)[:-1])
-            return data.apply(lambda df: self._multicomp_lambda(df, method=method))
-        return self._multicomp_lambda(data, method=method)
+        if isinstance(stats_category_or_data, pd.DataFrame):
+            data = stats_category_or_data
+        else:
+            data = self.results_cat(stats_category_or_data)
+
+        levels = self._multicomp_get_levels(levels, data)
+
+        _assert_has_index_levels(data, levels, match_atleast=True)
+
+        group_cols = list(data.index.names)[:-1]
+        group_cols = list(set(group_cols) - set(levels))
+
+        if len(group_cols) == 0:
+            return self._multicomp_lambda(data, method=method)
+        return data.groupby(group_cols).apply(lambda df: self._multicomp_lambda(df, method=method))
+
+    @classmethod
+    def _multicomp_get_levels(cls, levels: Union[bool, str, Sequence[str]], data: pd.DataFrame) -> Sequence[str]:
+        if levels is None:
+            levels = []
+        elif isinstance(levels, bool):
+            if levels:
+                levels = list(data.index.names)[:-1]
+            else:
+                levels = []
+        elif isinstance(levels, str):
+            levels = [levels]
+        return levels
 
     @staticmethod
     def _multicomp_lambda(data: pd.DataFrame, method: str) -> pd.DataFrame:
@@ -619,6 +676,7 @@ class StatsPipeline:
 
             stats_data = pd.concat([stats_data.filter(like=f, axis=0) for f in features])
 
+        stats_data = stats_data.drop_duplicates()
         stats_data = stats_data.reset_index()
         if plot_type == "single":
             box_pairs = self._get_box_pairs_single(stats_data)
@@ -629,6 +687,7 @@ class StatsPipeline:
 
     def _get_stats_data_box_pairs_interaction(self, stats_data: pd.DataFrame):
         stats_data = stats_data.reset_index()
+        stats_data = stats_data[stats_data[self.params["within"]] != "-"]
         index = stats_data[self.params.get("groupby", [])]
         stats_data = stats_data.set_index(self.params["within"])
 
@@ -656,3 +715,29 @@ class StatsPipeline:
             raise ValueError("'x' must be specified when 'plot_type' is 'multi'!")
         stats_data = stats_data.set_index(x)
         return stats_data.apply(lambda row: ((row.name, row["A"]), (row.name, row["B"])), axis=1)
+
+    def _display_category(  # pylint:disable=too-many-branches
+        self, category: str, steps: Sequence[str], sig_only: Dict[str, bool], groupby: str, group_key: str
+    ):
+        try:
+            from IPython.core.display import Markdown, display  # pylint:disable=import-outside-toplevel
+        except ImportError as e:
+            raise ImportError(
+                "Displaying statistics results failed because "
+                "IPython cannot be imported. Install it via 'pip install ipython'."
+            ) from e
+        display(Markdown("""<font size="3"><b> {} </b></font>""".format(MAP_CATEGORIES[category])))
+        for step in steps:
+            display(Markdown("**{}**".format(MAP_NAMES[step])))
+            df = self.results[step]
+            if groupby is not None:
+                df = df.xs(group_key, level=groupby)
+            if sig_only.get(category, False):
+                df = self._filter_sig(df)
+                if df.empty:
+                    display(Markdown("*No significant p-values.*"))
+                    continue
+            if self.round is None:
+                display(df)
+            else:
+                display(df.round(self.round))

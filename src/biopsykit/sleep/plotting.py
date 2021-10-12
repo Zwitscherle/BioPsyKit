@@ -1,21 +1,15 @@
 """Module providing functions to plot data collected during sleep studies."""
 import datetime
-from typing import Union, Optional, Dict, Tuple, Sequence, List, Iterable
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
+import matplotlib.dates as mdates
+import matplotlib.pyplot as plt
+import matplotlib.ticker as mticks
 import pandas as pd
 import seaborn as sns
 
-import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
-import matplotlib.ticker as mticks
-
-import biopsykit.colors as colors
-from biopsykit.utils.datatype_helper import (
-    SleepEndpointDict,
-    AccDataFrame,
-    GyrDataFrame,
-    ImuDataFrame,
-)
+from biopsykit import colors
+from biopsykit.utils.datatype_helper import AccDataFrame, GyrDataFrame, ImuDataFrame, SleepEndpointDict
 
 _sleep_imu_plot_params = {
     "background_color": ["#e0e0e0", "#9e9e9e"],
@@ -67,8 +61,8 @@ def sleep_imu_plot(
 
         * ``axs``: pre-existing axes for the plot. Otherwise, a new figure and axes objects are created and
           returned.
-        * ``colormap``: colormap to plot different axes from input data
         * ``figsize``: tuple specifying figure dimensions
+        * ``palette``: color palette to plot different axes from input data
 
         To style axes:
 
@@ -92,7 +86,7 @@ def sleep_imu_plot(
     """
     axs: List[plt.Axes] = kwargs.pop("ax", kwargs.pop("axs", None))
 
-    sns.set_palette(kwargs.get("colormap", colors.fau_palette_blue("line_3")))
+    sns.set_palette(kwargs.get("palette", colors.fau_palette_blue(3)))
 
     if datastreams is None:
         datastreams = ["acc"]
@@ -191,7 +185,7 @@ def _sleep_imu_plot_add_sleep_endpoints(sleep_endpoints: SleepEndpointDict, **kw
     sleep_onset = pd.to_datetime(sleep_endpoints["sleep_onset"])
     wake_onset = pd.to_datetime(sleep_endpoints["wake_onset"])
 
-    ax = kwargs.get("ax")
+    ax = kwargs.pop("ax")
 
     if isinstance(sleep_endpoints, dict):
         sleep_bouts = sleep_endpoints["sleep_bouts"]
@@ -252,15 +246,15 @@ def _sleep_imu_plot_add_annotations(
     plot_sleep_wake = kwargs.get("plot_sleep_wake", True)
 
     if plot_sleep_onset:
-        _sleep_imu_plot_add_sleep_onset(sleep_onset, **kwargs)
+        _sleep_imu_plot_add_sleep_onset(sleep_onset, ax, **kwargs)
     if plot_wake_onset:
-        _sleep_imu_plot_add_wake_onset(wake_onset, **kwargs)
+        _sleep_imu_plot_add_wake_onset(wake_onset, ax, **kwargs)
     if plot_bed_start:
-        _sleep_imu_plot_add_bed_start(sleep_onset, bed_start, **kwargs)
+        _sleep_imu_plot_add_bed_start(sleep_onset, bed_start, ax, **kwargs)
     if plot_bed_end:
-        _sleep_imu_plot_add_bed_end(wake_onset, bed_end, **kwargs)
+        _sleep_imu_plot_add_bed_end(wake_onset, bed_end, ax, **kwargs)
     if plot_sleep_wake:
-        handles = _sleep_imu_plot_add_sleep_wake_bouts(sleep_bouts, wake_bouts, **kwargs)
+        handles = _sleep_imu_plot_add_sleep_wake_bouts(sleep_bouts, wake_bouts, ax, **kwargs)
         legend = ax.legend(
             handles=list(handles.values()),
             labels=list(handles.keys()),
@@ -271,8 +265,7 @@ def _sleep_imu_plot_add_annotations(
         ax.add_artist(legend)
 
 
-def _sleep_imu_plot_add_sleep_onset(sleep_onset, **kwargs):
-    ax = kwargs.get("ax")
+def _sleep_imu_plot_add_sleep_onset(sleep_onset, ax: plt.Axes, **kwargs):
     bbox = kwargs.get("bbox", _bbox_default)
 
     # Sleep Onset vline
@@ -297,7 +290,6 @@ def _sleep_imu_plot_add_sleep_onset(sleep_onset, **kwargs):
         ha="left",
         va="center",
         bbox=bbox,
-        size=14,
         arrowprops=dict(
             arrowstyle="->",
             lw=2,
@@ -308,8 +300,7 @@ def _sleep_imu_plot_add_sleep_onset(sleep_onset, **kwargs):
     )
 
 
-def _sleep_imu_plot_add_wake_onset(wake_onset, **kwargs):
-    ax = kwargs.get("ax")
+def _sleep_imu_plot_add_wake_onset(wake_onset, ax: plt.Axes, **kwargs):
     bbox = kwargs.get("bbox", _bbox_default)
     # Wake Onset vline
     ax.vlines(
@@ -333,7 +324,6 @@ def _sleep_imu_plot_add_wake_onset(wake_onset, **kwargs):
         ha="right",
         va="center",
         bbox=bbox,
-        size=14,
         arrowprops=dict(
             arrowstyle="->",
             lw=2,
@@ -344,8 +334,7 @@ def _sleep_imu_plot_add_wake_onset(wake_onset, **kwargs):
     )
 
 
-def _sleep_imu_plot_add_bed_start(sleep_onset, bed_start, **kwargs):
-    ax = kwargs.get("ax")
+def _sleep_imu_plot_add_bed_start(sleep_onset, bed_start, ax: plt.Axes, **kwargs):
     bbox = kwargs.get("bbox", _bbox_default)
 
     # Bed Start vline
@@ -369,7 +358,6 @@ def _sleep_imu_plot_add_bed_start(sleep_onset, bed_start, **kwargs):
         ha="left",
         va="center",
         bbox=bbox,
-        size=14,
         arrowprops=dict(
             arrowstyle="->",
             lw=2,
@@ -380,8 +368,7 @@ def _sleep_imu_plot_add_bed_start(sleep_onset, bed_start, **kwargs):
     )
 
 
-def _sleep_imu_plot_add_bed_end(wake_onset, bed_end, **kwargs):
-    ax = kwargs.get("ax")
+def _sleep_imu_plot_add_bed_end(wake_onset, bed_end, ax: plt.Axes, **kwargs):
     bbox = kwargs.get("bbox", _bbox_default)
 
     # Bed End vline
@@ -405,7 +392,6 @@ def _sleep_imu_plot_add_bed_end(wake_onset, bed_end, **kwargs):
         ha="right",
         va="center",
         bbox=bbox,
-        size=14,
         arrowprops=dict(
             arrowstyle="->",
             lw=2,
@@ -417,9 +403,8 @@ def _sleep_imu_plot_add_bed_end(wake_onset, bed_end, **kwargs):
 
 
 def _sleep_imu_plot_add_sleep_wake_bouts(
-    sleep_bouts: pd.DataFrame, wake_bouts: pd.DataFrame, **kwargs
+    sleep_bouts: pd.DataFrame, wake_bouts: pd.DataFrame, ax: plt.Axes, **kwargs
 ) -> Dict[str, plt.Artist]:
-    ax = kwargs.get("ax")
     handles = {}
     for (bout_name, bouts), bg_color, bg_alpha in zip(
         {"sleep": sleep_bouts, "wake": wake_bouts}.items(),

@@ -1,14 +1,15 @@
 """Module representing the Cold Face Test (CFT) protocol."""
 import datetime
 import warnings
-from typing import Optional, Tuple, Dict, Union, Any
+from typing import Any, Dict, Optional, Tuple, Union
 
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
 import matplotlib.patches as mpatch
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import seaborn as sns
 
-import biopsykit.colors as colors
+from biopsykit import colors
 from biopsykit.protocols import BaseProtocol
 from biopsykit.signals.ecg.plotting import hr_plot
 from biopsykit.utils.exceptions import FeatureComputationError
@@ -92,9 +93,10 @@ class CFT(BaseProtocol):
         """Duration of the Cold Face Exposure in seconds. Default: 120 seconds"""
 
         cft_plot_params = {
-            "background_color": ["#e0e0e0", "#9e9e9e", "#757575"],
-            "background_alpha": [0.5, 0.5, 0.5],
-            "phase_names": ["Baseline", "Cold Face Test", "Recovery"],
+            "background_color": None,
+            "background_base_color": "#e0e0e0",
+            "background_alpha": 0.2,
+            "phase_names": list(structure.keys()),
         }
         cft_plot_params.update(kwargs.get("cft_plot_params", {}))
         self.cft_plot_params: Dict[str, Any] = cft_plot_params
@@ -259,7 +261,8 @@ class CFT(BaseProtocol):
           CFT onset in seconds.
         * ``onset_idx``: location of CFT onset as array index
         * ``onset_hr``: heart rate at CFT onset in bpm
-        * ``onset_hr_percent``: relative change of CFT onset heart rate compared to Baseline heart rate in percent.
+        * ``onset_hr_brady_percent``: bradycardia at CFT onset, i.e., relative change of CFT onset heart rate compared
+          to Baseline heart rate in percent.
         * ``onset_slope``: Slope between Baseline heart rate and CFT onset heart rate, computed as:
           `onset_slope = (onset_hr - baseline_hr) / onset_latency`
 
@@ -471,7 +474,7 @@ class CFT(BaseProtocol):
 
         # get time points in seconds
         # TODO check index type
-        idx_s = df_hr_cft.index.astype(int) / 1e9
+        idx_s = df_hr_cft.index.view(int) / 1e9
         idx_s = idx_s - idx_s[0]
 
         # apply a 2nd degree polynomial fit
@@ -581,20 +584,20 @@ class CFT(BaseProtocol):
 
         """
         ax: plt.Axes = kwargs.pop("ax", None)
-        figsize = kwargs.get("figsize", (12, 5))
+
         if ax is None:
-            fig, ax = plt.subplots(figsize=figsize)
+            fig, ax = plt.subplots(figsize=kwargs.get("figsize"))
         else:
             fig = ax.get_figure()
 
-        time_baseline = kwargs.get("time_baseline", self.structure["Baseline"])
-        time_recovery = kwargs.get("time_recovery", self.structure["Recovery"])
+        time_baseline = kwargs.get("time_baseline", self.structure.get("Baseline", 0))
+        time_recovery = kwargs.get("time_recovery", self.structure.get("Recovery", 0))
 
         data = data.copy()
         cft_params = self.compute_cft_parameter(data, return_dict=True)
 
         if not kwargs.get("plot_datetime_index", False):
-            data.index = (data.index - data.index[0]).astype(int) / 1e9
+            data.index = (data.index - data.index[0]).view(int) / 1e9
 
         times_dict = self._cft_plot_get_cft_times(data, time_baseline, time_recovery)
         df_plot = self._cft_plot_extract_plot_interval(data, times_dict)
@@ -605,7 +608,7 @@ class CFT(BaseProtocol):
             boxstyle="round",
         )
 
-        hr_plot(heart_rate=df_plot, ax=ax, plot_mean=False, show_legend=False)
+        hr_plot(heart_rate=df_plot, ax=ax, plot_mean=False)
         self._cft_plot_add_phase_annotations(ax, times_dict, **kwargs)
         self._cft_plot_add_param_annotations(data, cft_params, times_dict, ax, bbox, **kwargs)
 
@@ -621,7 +624,7 @@ class CFT(BaseProtocol):
         if isinstance(ylims, (tuple, list)):
             ax.set_ylim(ylims)
         else:
-            ymargin = 0.1
+            ymargin = 0.2
             if isinstance(ylims, float):
                 ymargin = ylims
             ax.margins(x=0, y=ymargin)
@@ -669,8 +672,15 @@ class CFT(BaseProtocol):
         self, ax: plt.Axes, times_dict: Dict[str, Union[int, datetime.datetime]], **kwargs
     ):
         times = list(zip(list(times_dict.values()), list(times_dict.values())[1:]))
-        bg_colors = kwargs.get("background_color", self.cft_plot_params["background_color"])
-        bg_alphas = kwargs.get("background_alpha", self.cft_plot_params["background_alpha"])
+        # filter empty phases, e.g., when no baseline or no recovery phase is present
+        times = list(filter(lambda t: (t[-1] - t[0]) != 0, times))
+
+        bg_colors = kwargs.get("background_color", self.cft_plot_params.get("background_color"))
+        if bg_colors is None:
+            bg_color_base = kwargs.get("background_base_color", self.cft_plot_params.get("background_base_color"))
+            bg_colors = list(sns.dark_palette(bg_color_base, n_colors=len(times), reverse=True))
+        bg_alphas = kwargs.get("background_alpha", self.cft_plot_params.get("background_alpha"))
+        bg_alphas = [bg_alphas] * len(times)
         names = kwargs.get("phase_names", self.cft_plot_params["phase_names"])
 
         for (start, end), bg_color, bg_alpha, name in zip(times, bg_colors, bg_alphas, names):
@@ -884,10 +894,10 @@ class CFT(BaseProtocol):
         ax.annotate(
             "$Mean_{CFT}$: " + "{:.1f} %".format(cft_params["mean_brady_percent"]),
             xy=(x_offset, mean_hr),
-            xytext=(10, -5),
+            xytext=(-5, -5),
             textcoords="offset points",
             bbox=bbox,
-            ha="left",
+            ha="right",
             va="top",
         )
 

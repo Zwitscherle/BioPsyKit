@@ -1,19 +1,18 @@
 """Module providing functions to load and save logs from the *CARWatch* app."""
-from typing import Optional, Dict, Union, Sequence
-import re
 import json
+import re
 import warnings
 import zipfile
-
 from pathlib import Path
+from typing import Dict, Optional, Sequence, Union
 
 import pandas as pd
-from tqdm.notebook import tqdm
+from tqdm.auto import tqdm
 
 from biopsykit.carwatch_logs import LogData
-from biopsykit.utils._types import path_t
-from biopsykit.utils.time import utc, tz
 from biopsykit.utils._datatype_validation_helper import _assert_file_extension
+from biopsykit.utils._types import path_t
+from biopsykit.utils.time import tz, utc
 
 LOG_FILENAME_PATTERN = "logs_(.*?)"
 
@@ -142,7 +141,8 @@ def load_log_one_subject(
         # TODO add error messages if no log files are found (e.g. wrong folder path etc.)
         return log_folder_to_dataframe(path)
 
-    _assert_file_extension(path, [".zip", ".csv"])
+    if path.is_file():
+        _assert_file_extension(path, [".zip", ".csv"])
     if path.suffix == ".zip":
         with zipfile.ZipFile(path, "r") as zip_ref:
             export_folder = path.parent.joinpath(re.search(log_filename_pattern, path.name).group(1))

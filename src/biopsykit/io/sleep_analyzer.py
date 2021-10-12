@@ -1,19 +1,20 @@
+# pylint:disable=unsupported-assignment-operation
+# pylint:disable=unsubscriptable-object
 """Module containing different I/O functions to load data recorded by Withings Sleep Analyzer."""
-from ast import literal_eval
 import datetime
-from pathlib import Path
-from typing import Optional, Union, Sequence
-
 import re
+from ast import literal_eval
+from pathlib import Path
+from typing import Dict, Optional, Sequence, Union
 
+import numpy as np
 import pandas as pd
 
 from biopsykit.sleep.utils import split_nights
 from biopsykit.utils._datatype_validation_helper import _assert_file_extension, _assert_has_columns, _assert_is_dir
 from biopsykit.utils._types import path_t
-from biopsykit.utils.datatype_helper import is_sleep_endpoint_dataframe, SleepEndpointDataFrame
+from biopsykit.utils.datatype_helper import SleepEndpointDataFrame, is_sleep_endpoint_dataframe
 from biopsykit.utils.time import tz
-
 
 __all__ = [
     "WITHINGS_RAW_DATA_SOURCES",
@@ -103,11 +104,17 @@ def load_withings_sleep_analyzer_raw_folder(
         if data_source in WITHINGS_RAW_DATA_SOURCES
     ]
     if split_into_nights:
-        # "transpose" nested list.
-        # before: outer lists = data source, inner lists = nights.
-        # after: outer lists = nights, inner lists = data source
-        list_data = list(map(list, zip(*list_data)))
-        data = [pd.concat(list_nights, axis=1) for list_nights in list_data]
+        # "transpose" list of dictionaries.
+        # before: outer list = data sources, inner dict = nights.
+        # after: outer dict = nights, inner list = data sources
+        keys = np.unique(np.array([sorted(data.keys()) for data in list_data]).flatten())
+        dict_nights = {}
+        for key in keys:
+            dict_nights.setdefault(key, [])
+            for data in list_data:
+                dict_nights[key].append(data[key])
+
+        data = {key: pd.concat(data, axis=1) for key, data in dict_nights.items()}
     else:
         data = pd.concat(list_data, axis=1)
     return data
@@ -118,7 +125,7 @@ def load_withings_sleep_analyzer_raw_file(
     data_source: str,
     timezone: Optional[Union[datetime.tzinfo, str]] = None,
     split_into_nights: Optional[bool] = True,
-) -> Union[pd.DataFrame, Sequence[pd.DataFrame]]:
+) -> Union[pd.DataFrame, Dict[str, pd.DataFrame]]:
     """Load single Withings Sleep Analyzer raw data file and convert into time-series data.
 
     Parameters
@@ -126,18 +133,20 @@ def load_withings_sleep_analyzer_raw_file(
     file_path : :class:`~pathlib.Path` or str
         path to file
     data_source : str
-        data source of file specified by ``file_path``
+        data source of file specified by ``file_path``. Must be one of
+        ['heart_rate', 'respiration_rate', 'sleep_state', 'snoring'].
     timezone : str or :class:`datetime.tzinfo`, optional
         timezone of recorded data, either as string or as tzinfo object.
         Default: 'Europe/Berlin'
     split_into_nights : bool, optional
-        whether to split the dataframe into the different recording nights (and return a list of dataframes) or not.
+        whether to split the dataframe into the different recording nights (and return a dictionary of dataframes)
+        or not.
         Default: ``True``
 
     Returns
     -------
-    :class:`~pandas.DataFrame` or list of such
-        dataframe (or list of dataframes, if ``split_into_nights`` is ``True``) with Sleep Analyzer data
+    :class:`~pandas.DataFrame` or dict of such
+        dataframe (or dict of dataframes, if ``split_into_nights`` is ``True``) with Sleep Analyzer data
 
     Raises
     ------
@@ -173,6 +182,7 @@ def load_withings_sleep_analyzer_raw_file(
     data["value"] = data["value"].apply(literal_eval)
     # set index and sort
     data = data.set_index("start").sort_index()
+    data = data.loc[~data.index.duplicated()]
     # rename index
     data.index.name = "time"
     # explode data and apply timestamp explosion to groups
@@ -190,7 +200,9 @@ def load_withings_sleep_analyzer_raw_file(
 
     if split_into_nights:
         data_explode = split_nights(data_explode)
-        data_explode = [d.resample("1min").interpolate() for d in data_explode]
+        data_explode = {key: _reindex_datetime_index(d) for key, d in data_explode.items()}
+    else:
+        data_explode = _reindex_datetime_index(data_explode)
     return data_explode
 
 
@@ -335,3 +347,7 @@ def _explode_timestamp(df: pd.DataFrame) -> pd.DataFrame:
     # we don't need the duration column anymore so we can drop it
     df.drop(columns="duration", inplace=True)
     return df
+
+
+def _reindex_datetime_index(df: pd.DataFrame) -> pd.DataFrame:
+    return df.reindex(df.resample("1min").bfill().index)
