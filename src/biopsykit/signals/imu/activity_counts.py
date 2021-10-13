@@ -1,14 +1,15 @@
 """Module for generating Activity Counts from raw acceleration signals."""
 from typing import Union
 
-import numpy as np
+import biopsykit.utils.array_handling
 import pandas as pd
+import numpy as np
 from scipy import signal
 
-from biopsykit.utils._types import arr_t
-from biopsykit.utils.array_handling import downsample, sanitize_input_nd
+from biopsykit.utils.array_handling import sanitize_input_nd, downsample, sanitize_input_1d
 from biopsykit.utils.time import tz
-
+from biopsykit.utils._types import arr_t
+from biopsykit.utils.array_handling import sliding_window
 
 class ActivityCounts:
     """Generate Activity Counts from raw acceleration signals.
@@ -112,8 +113,15 @@ class ActivityCounts:
     @staticmethod
     def _truncate(data: np.ndarray) -> np.ndarray:
         upper_threshold = 2.13  # g
-        lower_threshold = 0.068  # g
+        #lower_threshold = 0.068  # g
         data[data > upper_threshold] = upper_threshold
+        #data[data < lower_threshold] = 0
+        return data
+
+    @staticmethod
+    def dead_band(data: np.ndarray) -> np.ndarray:
+        lower_threshold = 0.068  # g
+        #data[data > upper_threshold] = upper_threshold
         data[data < lower_threshold] = 0
         return data
 
@@ -128,7 +136,11 @@ class ActivityCounts:
         n_samples = 10 * 60
         #  Pad data at end to "fill" last bin
         padded_data = np.pad(data, (0, n_samples - len(data) % n_samples), "constant", constant_values=0)
-        return padded_data.reshape((len(padded_data) // n_samples, -1)).mean(axis=1)
+        pad_mat = sliding_window(padded_data,overlap_percent=0,window_samples=300).sum(axis=1)
+
+        #return padded_data.reshape((len(padded_data) // n_samples, -1)).mean(axis=1)
+
+        return pad_mat
 
     def calculate(self, data: arr_t) -> arr_t:
         """Calculate Activity Counts from acceleration data.
@@ -151,11 +163,10 @@ class ActivityCounts:
                 start_idx = data.index[0]
 
         arr = sanitize_input_nd(data, ncols=(1, 3))
-
         if arr.shape[1] not in (1, 3):
             raise ValueError(
                 "{} takes only 1D or 3D accelerometer data! Got {}D data.".format(self.__class__.__name__, arr.shape[1])
-            )
+             )
         if arr.shape[1] != 1:
             arr = self._compute_norm(arr)
 
@@ -163,8 +174,9 @@ class ActivityCounts:
         arr = self._aliasing_filter(arr, 30)
         arr = self._actigraph_filter(arr)
         arr = self._downsample(arr, 30, 10)
-        arr = np.abs(arr)
         arr = self._truncate(arr)
+        arr = np.abs(arr)
+        arr = self.dead_band(arr)
         arr = self._digitize_8bit(arr)
         arr = self._accumulate_minute_bins(arr)
 
@@ -174,7 +186,7 @@ class ActivityCounts:
             if start_idx is not None:
                 # index das DateTimeIndex
                 start_idx = float(start_idx.to_datetime64()) / 1e9
-                arr.index = pd.to_datetime((arr.index * 60 + start_idx).astype(int), utc=True, unit="s").tz_convert(tz)
+                arr.index = pd.to_datetime((arr.index * 30 + start_idx).astype(int), utc=True, unit="s").tz_convert(tz)
                 arr.index.name = "time"
 
         return arr
