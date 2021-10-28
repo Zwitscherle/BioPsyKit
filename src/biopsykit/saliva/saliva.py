@@ -287,7 +287,7 @@ def auc(
         whether to additionally compute :math:`AUC_I` only for saliva samples *post* stressor.
         Saliva samples *post* stressor are defined as all samples with non-negative ``sample_times``.
         Default: ``False``
-    sample_times: :any:`numpy.ndarray` or list, optional
+    sample_times: :class:`numpy.ndarray` or list, optional
         Saliva sampling times (corresponding to x-axis values for computing AUC). By default
         (``sample_times`` is ``None``) sample times are expected to be part of the dataframe (in the `time` column).
         Alternatively, sample times can be specified by passing a list or a numpy array to this argument.
@@ -403,7 +403,7 @@ def slope(
     sample_idx : list or tuple
         pair of saliva sample indices to compute slope between.
         An error will the raised if not exactly 2 sample are specified
-    sample_times: :any:`numpy.ndarray` or list, optional
+    sample_times: :class:`~numpy.ndarray` or list, optional
         Saliva sampling times (corresponding to x-axis values for computing slope). By default
         (``sample_times`` is ``None``) sample times are expected to be part of the dataframe (in the `time` column).
         Alternatively, sample times can be specified by passing a list or a numpy array to this argument.
