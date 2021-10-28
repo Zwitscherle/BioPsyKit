@@ -51,7 +51,7 @@ def fau_palette_by_name(name: FAU_COLORS) -> Callable:
     Parameters
     ----------
     name : str
-        Color name. Must be one of :obj:`~biopsykit.colors.colors.FAU_COLORS`.
+        Color name. Must be one of :const:`biopsykit.colors.FAU_COLORS`.
 
     Returns
     -------
@@ -216,7 +216,7 @@ def fau_color(color: FAU_COLORS) -> str:
     Parameters
     ----------
     color : str
-        Color key. Must be one of :obj:`~biopsykit.colors.colors.FAU_COLORS`..
+        Color key. Must be one of :const:`biopsykit.colors.FAU_COLORS`.
 
     Returns
     -------
