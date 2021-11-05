@@ -24,14 +24,16 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install poetry
+        pip install poethepoet
         poetry config virtualenvs.in-project true
         poetry install -E mne -E jupyter
     - name: Linting
       run: |
-        poetry run doit -v 0 --continue format_check lint
+        poe format_check
+        poe lint
     - name: Testing
       run: |
-        poetry run doit test
+        poe test
     - name: "Upload coverage to Codecov"
       uses: codecov/codecov-action@v2
       with:
