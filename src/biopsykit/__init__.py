@@ -10,7 +10,6 @@ import scipy
 
 import biopsykit.carwatch_logs  # noqa: F401
 import biopsykit.classification  # noqa: F401
-import biopsykit.colors  # noqa: F401
 import biopsykit.example_data  # noqa: F401
 import biopsykit.io  # noqa: F401
 import biopsykit.metadata  # noqa: F401
@@ -26,7 +25,6 @@ import biopsykit.utils  # noqa: F401
 __all__ = [
     "carwatch_logs",
     "classification",
-    "colors",
     "example_data",
     "io",
     "metadata",
@@ -40,7 +38,7 @@ __all__ = [
     "utils",
 ]
 
-__version__ = "0.3.7"
+__version__ = "0.4.0"
 
 
 def version() -> None:
