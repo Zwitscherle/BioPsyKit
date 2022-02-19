@@ -4,7 +4,7 @@ from typing import Any, Dict, Optional
 import numpy as np
 from sklearn.metrics import confusion_matrix, get_scorer
 from sklearn.model_selection import BaseCrossValidator, GridSearchCV, RandomizedSearchCV
-from sklearn.pipeline import Pipeline
+from imblearn.pipeline import Pipeline
 from tqdm.auto import tqdm
 
 from biopsykit.classification.utils import split_train_test

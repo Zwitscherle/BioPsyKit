@@ -3,7 +3,7 @@ from typing import Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
-from sklearn.pipeline import Pipeline
+from imblearn.pipeline import Pipeline
 
 __all__ = ["factorize_subject_id", "prepare_df_sklearn", "split_train_test", "strip_df", "strip_labels"]
 

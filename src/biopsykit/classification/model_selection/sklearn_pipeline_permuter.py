@@ -9,7 +9,7 @@ import pandas as pd
 from joblib import Memory
 from sklearn.base import BaseEstimator, clone
 from sklearn.model_selection import BaseCrossValidator
-from sklearn.pipeline import Pipeline
+from imblearn.pipeline import Pipeline
 from tqdm.auto import tqdm
 
 from biopsykit.classification.model_selection import nested_cv_param_search
